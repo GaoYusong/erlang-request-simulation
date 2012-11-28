@@ -8,7 +8,7 @@ clean:
 	./rebar clean
 
 run:
-	erl -pa ebin -s request_simulation start
+	erl -pa ebin -pa deps/*/ebin -s request_simulation start
 
 test:
 	./rebar eunit

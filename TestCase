@@ -1,0 +1,2 @@
+{ok, Pid} = request_session_sup:start_child(),
+TokensPid = proplists:get_value(tokens_queue_pid, request_session:infos(Pid)).
