@@ -82,7 +82,7 @@ handle_cast(send_request, State = #state{ pool_id = PoolId, count = Count }) ->
 	{noreply, State#state{count = Count + 1}, get_time_left(State)};
 
 handle_cast(stop, State) ->
-	{stop, normal, State, get_time_left(State)};
+	{stop, normal, State};
 
 handle_cast(_Event, State) ->
 	{noreply, State, get_time_left(State)}.
