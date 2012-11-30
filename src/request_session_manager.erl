@@ -39,10 +39,10 @@ add_work(Name, Option) ->
 	add_work(Name, Option, []).
 
 add_work(Name, Option, Links) when is_list(Links) ->
-	gen_server:call(?MODULE, {add_work, Name, Option, Links}).
+	gen_server:call(?MODULE, {add_work, Name, Option, Links}, infinity).
 
 del_work(Name) ->
-	gen_server:call(?MODULE, {del_work, Name}).
+	gen_server:call(?MODULE, {del_work, Name}, infinity).
 
 get_works() ->
 	gen_server:call(?MODULE, get_works).
@@ -57,13 +57,13 @@ get_option(Name) ->
 	gen_server:call(?MODULE, {get_option, Name}).
 
 get_qps(Name) ->
-	gen_server:call(?MODULE, {get_qps, Name}).
+	gen_server:call(?MODULE, {get_qps, Name}, infinity).
 
 get_links(Name) ->
 	gen_server:call(?MODULE, {get_links, Name}).
 
 add_links(Name, Links) ->
-	gen_server:call(?MODULE, {add_links, Name, Links}).
+	gen_server:call(?MODULE, {add_links, Name, Links}, infinity).
 
 
 init([]) ->
