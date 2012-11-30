@@ -20,7 +20,7 @@
 	}).
 
 -define(default_max_qps, 100).
--define(default_qps_interval, 5000).
+-define(default_qps_interval, 2000).
 
 -record(state, ?state_tuple).
 
