@@ -1,10 +1,22 @@
 -module(request_simulation_lib).
 
 -export([
+  get_env/2,
+  get_env/3,
 	get_infos_from_state/2, 
 	ensure_started/1,
 	report_exception/3
 ]).
+
+get_env(App, Key) ->
+  get_env(App, Key, undefined).
+
+get_env(App, Key, Default) ->
+  case application:get_env(App, Key) of
+    {ok, Value} ->
+      Value;
+    _ -> Default
+  end.
 
 get_infos_from_state(State, StateTuple) ->
 	{_, Infos} = lists:foldl(

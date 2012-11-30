@@ -11,7 +11,7 @@ run:
 	erl -pa ebin -pa deps/*/ebin -s request_simulation start
 
 test:
-	./rebar eunit
+	./rebar skip_deps=true eunit
 
 
 

@@ -10,10 +10,16 @@
 -export([
 	start_link/0, 
 	infos/0,
+	add_work/2,
 	add_work/3,
 	del_work/1,
-	get_work/1,
-	get_work_qps/1
+	get_works/0,
+	set_option/2,
+	set_option/3,
+	get_option/1,
+	get_qps/1,
+	get_links/1,
+	add_links/2
 ]).
 
 -define(state_tuple, {
@@ -29,17 +35,36 @@ start_link() ->
 infos() ->
 	gen_server:call(?MODULE, infos).
 
-add_work(Name, Option, Links) ->
+add_work(Name, Option) ->
+	add_work(Name, Option, []).
+
+add_work(Name, Option, Links) when is_list(Links) ->
 	gen_server:call(?MODULE, {add_work, Name, Option, Links}).
 
 del_work(Name) ->
 	gen_server:call(?MODULE, {del_work, Name}).
 
-get_work(Name) ->
-	gen_server:call(?MODULE, {get_work, Name}).
+get_works() ->
+	gen_server:call(?MODULE, get_works).
 
-get_work_qps(Name) ->
-	gen_server:call(?MODULE, {get_work_qps, Name}).
+set_option(Name, Option) ->
+	set_option(Name, Option, []).
+
+set_option(Name, Option, Links) when is_list(Links) ->
+	gen_server:call(?MODULE, {set_option, Name, Option, Links}).
+
+get_option(Name) ->
+	gen_server:call(?MODULE, {get_option, Name}).
+
+get_qps(Name) ->
+	gen_server:call(?MODULE, {get_qps, Name}).
+
+get_links(Name) ->
+	gen_server:call(?MODULE, {get_links, Name}).
+
+add_links(Name, Links) ->
+	gen_server:call(?MODULE, {add_links, Name, Links}).
+
 
 init([]) ->
 	{ok, #state{
@@ -57,52 +82,67 @@ handle_call({add_work, Name, Option, Links}, _From, State = #state{stress_works 
 			true ->
 				{error, name_already_used};
 			false ->
-				Lists = 
-					lists:append(
-						lists:map(
-							fun(Link) ->
-								case Link of
-									{Count, MaxQPS} when is_integer(Count) andalso is_integer(MaxQPS)
-													andalso Count > 0 andalso MaxQPS > 0 ->
-										start_connect(Count, MaxQPS, Option);
-									_ ->
-										[]
-								end
-							end
-						, Links)),
-				ets:insert(StressWorks, {Name, Lists}),
+				Lists = do_add_links(Option, Links, []),
+				ets:insert(StressWorks, {Name, { Option, Lists } }),
 				{ok, Lists}
 		end,
 	{reply, Result, State};
 
 handle_call({del_work, Name}, _From, State = #state{stress_works = StressWorks}) ->
-	Result = 
-		case ets:lookup(StressWorks, Name) of
-			[] ->
-				{error, name_not_existed};
-			[{Name, Lists}] ->
+	Result = check_do(StressWorks, Name,
+			fun({TheName, {_Option, Lists}}) ->
 				remove_connect(Lists),
-				ets:delete(StressWorks, Name),
+				ets:delete(StressWorks, TheName),
 				ok
-		end,
+			end
+		),
 	{reply, Result, State};
 
-handle_call({get_work, Name}, _From, State = #state{stress_works = StressWorks}) ->
-	Result = 
-		case ets:lookup(StressWorks, Name) of
-			[] ->
-				{error, name_not_existed};
-			[{Name, Lists}] ->
+handle_call(get_works, _From, State = #state{ stress_works = StressWorks }) ->
+	{reply, ets:tab2list(StressWorks), State};
+
+handle_call({get_links, Name}, _From, State = #state{stress_works = StressWorks}) ->
+	Result = check_do(StressWorks, Name,
+			fun({_Name, {_Option, Lists}}) ->
 				{ok, Lists}
-		end,
+			end
+		),
 	{reply, Result, State};
 
-handle_call({get_work_qps, Name}, _From, State = #state{stress_works = StressWorks}) ->
-	Result = 
-		case ets:lookup(StressWorks, Name) of
-			[] ->
-				{error, name_not_existed};
-			[{Name, Lists}] ->
+handle_call({add_links, Name, Links}, _From, State = #state{ stress_works = StressWorks }) ->
+	Result = check_do(StressWorks, Name,
+			fun({ TheName, { Option, Lists } }) ->
+				NewLists = do_add_links(Option, Links, Lists),
+				ets:insert( StressWorks, { TheName, { Option, NewLists } }),
+				{ok, NewLists}
+			end
+		),
+	{reply, Result, State};
+
+handle_call({get_option, Name}, _From, State = #state{ stress_works = StressWorks }) ->
+	Result = check_do(StressWorks, Name,
+			fun({ _Name, { Option, _Lists }}) ->
+				{ok, Option}
+			end
+		),
+	{reply, Result, State};
+
+
+handle_call({set_option, Name, Option, Links}, _From, State = #state{ stress_works = StressWorks }) ->
+	Result = check_do(StressWorks, Name,
+			fun ({ TheName, { _LastOption, LastLists}}) ->  
+				remove_connect(LastLists),
+				Lists = do_add_links(Option, Links, []),
+				ets:insert( StressWorks, { TheName, { Option, Lists } } ),
+				{ok, Lists}
+			end
+		),
+	{reply, Result, State};
+
+
+handle_call({get_qps, Name}, _From, State = #state{stress_works = StressWorks}) ->
+	Result = check_do(StressWorks, Name,
+			fun({_Name, {_Option, Lists}}) ->
 				{ok,
 					lists:map(
 						fun(Pid) ->
@@ -115,8 +155,10 @@ handle_call({get_work_qps, Name}, _From, State = #state{stress_works = StressWor
 							[{pid, Pid}, {qps, Qps}]
 						end
 					, Lists)}
-		end,
+			end
+		),
 	{reply, Result, State};
+
 
 handle_call(_Event, _From, State) ->
 	{reply, {error, discard}, State}.
@@ -153,3 +195,107 @@ remove_connect(Lists) ->
 			request_session_sup:delete_child(Pid)
 		end
 	, Lists).
+
+
+do_add_links(Option, Links, Lists) ->
+	Lists ++ 
+		lists:append(
+			lists:map(
+				fun(Link) ->
+					case Link of
+						{Count, MaxQPS} when is_integer(Count) andalso is_integer(MaxQPS)
+										andalso Count > 0 andalso MaxQPS > 0 ->
+							start_connect(Count, MaxQPS, Option);
+						_ ->
+							[]
+					end
+				end
+			, Links)).
+
+check_do(StressWorks, Name, Func) ->
+	check_and_do(StressWorks, Name, fun() -> {error, name_not_existed} end, Func).
+
+check_and_do(StressWorks, Name, TrueFunc,  FalseFunc) ->
+	case ets:lookup(StressWorks, Name) of
+		[] ->
+			TrueFunc();
+		[Val] ->
+			FalseFunc(Val)
+	end.
+
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+
+check_work(Name, Option, Lists, Tag)  ->
+	io:format("Tag ~p~n", [Tag]),
+	?assertEqual(length(Lists), length(supervisor:which_children(request_session_sup))),
+	?assertEqual(Lists, element(2, get_links(Name))),
+	?assertEqual(Option, element(2, get_option(Name))).
+
+request_session_manager_test() ->
+	request_simulation:start(),
+	Option = request_simulation_lib:get_env(request_simulation, option, 
+		[ {user, "sample"}, {passwd, "test"}, {host, "10.232.64.72"}, {port, 7003}]),
+
+	%% add a work, check metadata, process is created
+	%% check add_work, get_links, get_option
+	AddWorkRet = add_work("sample", Option, [{5, 100}, {5, 200}]),
+	?assertMatch({ok, _}, AddWorkRet),
+	{ok, Lists} = AddWorkRet,
+	?assertEqual(10, length(Lists)),
+	check_work("sample", Option, Lists, "check add_work"),
+	
+
+	%% check add_work to existed work name
+	?assertEqual({error, name_already_used}, add_work("sample", Option, [])),
+
+	%% test del_work, check metadata, process is deleted
+	%% check del_work error, get_links error, get_option error
+	?assertEqual(ok, del_work("sample")),
+	%% wait request_session_sup remove children list
+	timer:sleep(100),
+	?assertEqual(0, length(supervisor:which_children(request_session_sup))),
+	?assertEqual({error, name_not_existed}, get_links("sample")),
+	?assertEqual({error, name_not_existed}, get_option("sample")),
+
+	%% del_work error
+	?assertEqual({error, name_not_existed}, del_work("sample")),
+
+	%% check add_work with option error
+	?assertEqual({ok, []}, add_work("sample", error, [{5, 100}, {5, 200}])),
+	ok = del_work("sample"),
+
+	%% check set_option
+	{ok, _} = add_work("sample", Option, [{5, 100}]),
+	SetOptionRet = set_option("sample", Option, [{5, 100}, {5, 200}]),
+	?assertMatch({ok, _}, SetOptionRet),
+	{ok, SetOptionLists} = SetOptionRet,
+	?assertEqual(10, length(SetOptionLists)),
+	check_work("sample", Option, SetOptionLists, "check set_option"),
+
+
+	%% check add_links,
+	AddLinksRet = add_links("sample", [{5, 100}]),
+	?assertMatch({ok, _}, AddLinksRet),
+	{ok, AddLinksLists} = AddLinksRet,
+	?assertEqual(15, length(AddLinksLists)),
+	check_work("sample", Option, AddLinksLists, "check add_links"),
+
+	{ok, QPS} = get_qps("sample"),
+	RealQPS = 
+		lists:filter(
+			fun(Elem) ->
+				proplists:get_value(qps, Elem) =/= undefined 
+				andalso is_process_alive(proplists:get_value(pid, Elem)) =:= true
+			end
+		, QPS),
+	?assertEqual(QPS, RealQPS),
+
+	?assertEqual({ok, []}, add_work("tarjan", Option, [error])),
+
+	{ok, _} = add_work("sap", Option, [{5, 50}]),
+	?assertEqual(3, length(get_works())).
+
+
+
+-endif.
