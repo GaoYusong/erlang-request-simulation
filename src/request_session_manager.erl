@@ -3,6 +3,8 @@
 
 -behaviour(gen_server).
 
+-include("request_simulation.hrl").
+
 %% callback function
 -export([init/1, handle_call/3, handle_cast/2, 
 	handle_info/2, terminate/2, code_change/3]).
@@ -19,11 +21,16 @@
 	get_option/1,
 	get_qps/1,
 	get_links/1,
-	add_links/2
+	add_links/2,
+	get_qps_history/1,
+	get_qps_history/2,
+	format_qps_history/1,
+	format_qps_history/2
 ]).
 
 -define(state_tuple, {
-		stress_works
+		stress_works,
+		works_qps_chart
 	}).
 
 
@@ -65,10 +72,54 @@ get_links(Name) ->
 add_links(Name, Links) ->
 	gen_server:call(?MODULE, {add_links, Name, Links}, infinity).
 
+get_qps_history(Name) ->
+	get_qps_history(Name, ?max_queue_length).
+
+get_qps_history(Name, HeadCount) ->
+	gen_server:call(?MODULE, {get_qps_history, Name, HeadCount}, infinity).
+
+format_qps_history(Name) ->
+	format_qps_history(Name, ?max_queue_length).
+format_qps_history(Name, HeadCount) when is_integer(HeadCount) andalso HeadCount >= 1 ->
+	case get_qps_history(Name, HeadCount) of
+		{ok, History} ->
+			lists:foreach(
+				fun(Elem) ->
+					io:format("~20s", [pid_to_list(pget(pid, Elem))])
+				end, History),
+			io:format("~n"),
+			%% this is very slow, but it is easy to write
+			lists:foreach(
+				fun(Elem) ->
+					lists:foreach(
+						fun(Info) ->
+							QpsHistory = pget(qps_history, Info),
+							Qps = case length(QpsHistory) < Elem of
+								true -> 0.0;
+								false -> 
+									Qps0 = lists:nth(Elem, QpsHistory),
+									case is_number(Qps0) of
+										true ->
+											float(Qps0);
+										false ->
+											0.0
+									end
+							end,
+							io:format("~20.2f", [Qps])
+						end
+					, History),
+					io:format("~n")
+				end
+			, lists:reverse(lists:seq(1, HeadCount))),
+			ok;
+		Error ->
+			Error
+	end.
 
 init([]) ->
 	{ok, #state{
-		stress_works = ets:new(stress_works, [named_table])
+		stress_works 	= ets:new(stress_works, [named_table]),
+		works_qps_chart = ets:new(works_qps_chart, [named_table])
 	}}.
 
 
@@ -76,7 +127,7 @@ handle_call(infos, _From, State) ->
 	Infos = request_simulation_lib:get_infos_from_state(State, ?state_tuple),
 	{reply, Infos, State};
 
-handle_call({add_work, Name, Option, Links}, _From, State = #state{stress_works = StressWorks}) ->
+handle_call({add_work, Name, Option, Links}, _From, State = #state{stress_works = StressWorks, works_qps_chart = WorksQpsChart}) ->
 	Result = 
 		case ets:member(StressWorks, Name) of
 			true ->
@@ -84,15 +135,35 @@ handle_call({add_work, Name, Option, Links}, _From, State = #state{stress_works 
 			false ->
 				Lists = do_add_links(Option, Links, []),
 				ets:insert(StressWorks, {Name, { Option, Lists } }),
+
+				%% start qps chart process
+				ChartPid = case request_qps_chart_sup:start_child(Name) of
+					{ok, Pid} -> Pid;
+					_ -> undefined
+				end,
+				ets:insert(WorksQpsChart, {Name, ChartPid}),
+				%% 
+
 				{ok, Lists}
 		end,
 	{reply, Result, State};
 
-handle_call({del_work, Name}, _From, State = #state{stress_works = StressWorks}) ->
+handle_call({del_work, Name}, _From, State = #state{stress_works = StressWorks, works_qps_chart = WorksQpsChart}) ->
 	Result = check_do(StressWorks, Name,
 			fun({TheName, {_Option, Lists}}) ->
 				remove_connect(Lists),
 				ets:delete(StressWorks, TheName),
+
+				%% stop qps chart process
+				case ets:lookup(WorksQpsChart, TheName) of
+					[] ->
+						ok;
+					[{_, Pid}] ->
+						request_qps_chart_sup:delete_child(Pid)
+				end,
+				ets:delete(WorksQpsChart, TheName),
+				%%
+
 				ok
 			end
 		),
@@ -159,6 +230,18 @@ handle_call({get_qps, Name}, _From, State = #state{stress_works = StressWorks}) 
 		),
 	{reply, Result, State};
 
+handle_call({get_qps_history, Name, HeadCount}, _From, State = #state{works_qps_chart = WorksQpsChart}) ->
+	Result = 
+		case ets:lookup(WorksQpsChart, Name) of
+			[] ->
+				{error, name_not_existed};
+			[{_, undefined}] ->
+				{error, qps_chart_process_not_stated};
+			[{_Key, Pid}] ->
+				{ok, request_qps_chart:get_qps_history(Pid, HeadCount)}
+		end,
+	{reply, Result, State};
+
 
 handle_call(_Event, _From, State) ->
 	{reply, {error, discard}, State}.
@@ -222,6 +305,9 @@ check_and_do(StressWorks, Name, TrueFunc,  FalseFunc) ->
 		[Val] ->
 			FalseFunc(Val)
 	end.
+
+pget(Key, List) ->
+	proplists:get_value(Key, List).
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").

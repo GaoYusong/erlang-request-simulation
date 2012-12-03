@@ -1,0 +1,2 @@
+-define(default_qps_interval, 1000).
+-define(max_queue_length, 120).

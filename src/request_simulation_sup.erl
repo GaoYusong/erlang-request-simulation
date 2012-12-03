@@ -27,6 +27,7 @@ init([]) ->
     {ok, { {one_for_one, 5, 10}, [
     	?CHILD(request_session_sup, supervisor),
     	?CHILD(request_session_manager, worker),
-    	?CHILD(generate_id, worker)
+    	?CHILD(generate_id, worker),
+    	?CHILD(request_qps_chart_sup, supervisor)
     ]} }.
 

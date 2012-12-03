@@ -3,6 +3,8 @@
 
 -behavior(gen_server).
 
+-include("request_simulation.hrl").
+
 %% callback function
 -export([init/1, handle_call/3, handle_cast/2, 
 	handle_info/2, terminate/2, code_change/3]).
@@ -20,7 +22,6 @@
 	}).
 
 -define(default_max_qps, 100).
--define(default_qps_interval, 2000).
 
 -record(state, ?state_tuple).
 
