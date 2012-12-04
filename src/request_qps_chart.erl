@@ -33,7 +33,7 @@ get_qps_history(Pid, HeadCount) ->
 	gen_server:call(Pid, {get_qps_history, HeadCount}).
 
 init([Name]) ->
-	{ok, emit_update(#state{ name = Name, qps_chart = ets:new(qps_chart, [named_table]) })}.
+	{ok, emit_update(#state{ name = Name, qps_chart = ets:new(qps_chart, []) })}.
 
 handle_call(infos, _From, State) ->
 	Infos = request_simulation_lib:get_infos_from_state(State, ?state_tuple),
