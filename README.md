@@ -1,4 +1,4 @@
-## erlang-request-simulation
+## Request Simulation Tool
 -------------------------------------
 
-a request simulation written in erlang, can simulate many connections request service, and conrol send rate of every connection exactly.
+A tool for request simulation written in Erlang can simulate numerous connection requests and precisely control the send rate for each connection.
